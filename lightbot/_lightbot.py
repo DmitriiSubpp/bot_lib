@@ -9,23 +9,30 @@ def quit_handler(signum, frame):
     logger.info("Interrupted!")
     sys.exit(0)
 
+
 signal.signal(signal.SIGINT, quit_handler)
 
 
 class InlineKeyboard:
-    def __init__(self, bot = None):
-        self.layout = {'inline_keyboard':[]}
+    def __init__(self, bot=None):
+        self.layout = {'inline_keyboard': []}
         self.bot = bot
 
     def add_buttons(self, *args, handler=None):
         buttons = []
         for button in args:
-            buttons.append( {'text':button, 'callback_data':button} )
-        self.layout['inline_keyboard'].append( buttons )
+            buttons.append({'text': button, 'callback_data': button})
+        self.layout['inline_keyboard'].append(buttons)
 
 
 class ReplyKeyboard:
-    def __init__(self, resize_keyboard=False, one_time_keyboard=False, input_field_placeholder='', selective=False):
+    def __init__(
+            self,
+            resize_keyboard=False,
+            one_time_keyboard=False,
+            input_field_placeholder='',
+            selective=False
+    ):
         self.layout = {
             'keyboard': [],
             'resize_keyboard': resize_keyboard,
@@ -37,7 +44,7 @@ class ReplyKeyboard:
     def add_buttons(self, *args):
         buttons = []
         for button in args:
-            buttons.append( {'text':button} )
+            buttons.append({'text': button})
         self.layout['keyboard'].append(buttons)
 
 
@@ -54,17 +61,15 @@ class Core:
         self.url = ''
 
         self.event_handlers = {}
-
         self.command_handlers = {}  # обработчики комманд
-        self.callback_button_handlers = {} # обработчики нажатий callback кнопок
-
-        self.text_handler = text_handler # управление событием 'message'
+        self.callback_button_handlers = {}  # обработчики нажатий callback кнопок
+        self.text_handler = text_handler  # управление событием 'message'
         self.location_handler = location_handler
         self.file_handler = file_handler
-        self.callback_handler = callback_handler # управление событием 'callback'
+        self.callback_handler = callback_handler  # управление событием 'callback'
 
-        self.input_handlers = {}    # обработчики ввода пользователя
-        self.input_cancel_handler = None # обработчик функции, которая вызывается после отмены ввода
+        self.input_handlers = {}  # обработчики ввода пользователя
+        self.input_cancel_handler = None  # обработчик функции, которая вызывается после отмены ввода
 
         self.unregistred_event_handler = None
         self.unregistred_command_handler = None
@@ -104,10 +109,10 @@ class Core:
         }
 
         response = requests.get(f'{self.url}/editMessageText', data=message_data)
-        if response.json()['ok'] == False:
+        if response.json()['ok'] is False:
             logger.error(f'telegram response for edit_message: {response.json()}')
 
-    def send_message(self, text:str, chat_id=None, keyboard = {}, parse_mode='markdown'):
+    def send_message(self, text, chat_id=None, keyboard={}, parse_mode='markdown'):
         r'''Send message to user.
 
         Parameters
@@ -122,18 +127,17 @@ class Core:
             Mode for parsing entities in the message text.
         '''
         message_data = {
-            'chat_id': self.chat_id if chat_id == None else chat_id,
+            'chat_id': self.chat_id if chat_id is None else chat_id,
             'text': text,
             'parse_mode': parse_mode,
             'reply_markup': json.dumps(keyboard)
         }
 
         response = requests.get(f'{self.url}/sendMessage', data=message_data)
-        if response.json()['ok'] == False:
+        if response.json()['ok'] is False:
             logger.error(f'telegram response for send_message: {response.json()}')
 
-
-    def send_photo(self, photo, chat_id=None, caption = '', keyboard = {}, parse_mode='markdown'):
+    def send_photo(self, photo, chat_id=None, caption='', keyboard={}, parse_mode='markdown'):
         r'''Send photo to user.
 
         Parameters
@@ -155,7 +159,7 @@ class Core:
             Mode for parsing entities in the caption text.
         '''
         message_data = {
-            'chat_id': self.chat_id if chat_id == None else chat_id,
+            'chat_id': self.chat_id if chat_id is None else chat_id,
             'photo': photo,
             'caption': caption,
             'parse_mode': parse_mode,
@@ -163,11 +167,10 @@ class Core:
         }
 
         response = requests.get(f'{self.url}/sendPhoto', data=message_data)
-        if response.json()['ok'] == False:
+        if response.json()['ok'] is False:
             logger.error(f'telegram response for send_photo: {response.json()}')
 
-
-    def send_document(self, document, chat_id=None, caption = '', keyboard = {}, parse_mode='markdown'):
+    def send_document(self, document, chat_id=None, caption='', keyboard={}, parse_mode='markdown'):
         r'''Send document to user.
 
         Parameters
@@ -187,7 +190,7 @@ class Core:
             Mode for parsing entities in the caption text.
         '''
         message_data = {
-            'chat_id': self.chat_id if chat_id == None else chat_id,
+            'chat_id': self.chat_id if chat_id is None else chat_id,
             'caption': caption,
             'parse_mode': parse_mode,
             'reply_markup': json.dumps(keyboard)
@@ -195,9 +198,8 @@ class Core:
 
         document_data = {'document': document}
         response = requests.get(f'{self.url}/sendDocument', data=message_data, files=document_data)
-        if response.json()['ok'] == False:
+        if response.json()['ok'] is False:
             logger.error(f'telegram response for send_document: {response.json()}')
-
 
     def download_file(self, file_id, path=None):
         r'''Download photo, voice message, document from telegram.
@@ -213,14 +215,14 @@ class Core:
                 for documents: ./documents/
         '''
         response = requests.get(f'{self.url}/getFile?file_id={file_id}')
-        if response.json()['ok'] == False:
+        if response.json()['ok'] is False:
             logger.error(f'telegram response for download_file: {response.json()}')
             return
 
         telegram_file_path = response.json()['result']['file_path']
         file = requests.get(f'https://api.telegram.org/file/bot{self.token}/{telegram_file_path}')
 
-        if path == None:
+        if path is None:
             path = telegram_file_path
 
         with open(path, 'wb') as doc:
@@ -369,11 +371,10 @@ class Core:
         '''
         self.unregistred_command_handler = handler
 
-
     def __get_events(self):
         r'''Starts listening to event.'''
         updates = requests.get(f'{self.url}/getUpdates', data=self.data)
-        if updates.json().get('ok') == False:
+        if updates.json().get('ok') is False:
             logger.error(f'telegram response: {updates.json()}')
             sys.exit(0)
         return updates.json()['result']
@@ -393,8 +394,8 @@ class Core:
         self.url = f'https://api.telegram.org/bot{token}'
 
         logger.info('Bot running...')
-        
-        while(True):
+
+        while True:
 
             events = self.__get_events()
 
@@ -434,5 +435,5 @@ class Core:
                     self.callback_handler.process(self)
 
                 else:
-                    if self.unregistred_event_handler != None:
+                    if self.unregistred_event_handler is not None:
                         self.unregistred_event_handler()
