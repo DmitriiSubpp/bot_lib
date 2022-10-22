@@ -1,439 +1,126 @@
 import requests
-import json
-import signal
 import sys
-from loguru import logger
 
 
-def quit_handler(signum, frame):
-    logger.info("Interrupted!")
-    sys.exit(0)
+class User:
+    def __init__(self, user):
+        self.id = user.get('id')
+        self.is_bot = user.get('is_bot')
+        self.first_name = user.get('first_name')
+        self.last_name = user.get('last_name')
+        self.username = user.get('username')
+        self.language_code = user.get('language_code')
 
 
-signal.signal(signal.SIGINT, quit_handler)
-
-
-class InlineKeyboard:
-    def __init__(self, bot=None):
-        self.layout = {'inline_keyboard': []}
-        self.bot = bot
-
-    def add_buttons(self, *args, handler=None):
-        buttons = []
-        for button in args:
-            buttons.append({'text': button, 'callback_data': button})
-        self.layout['inline_keyboard'].append(buttons)
-
-
-class ReplyKeyboard:
-    def __init__(
-            self,
-            resize_keyboard=False,
-            one_time_keyboard=False,
-            input_field_placeholder='',
-            selective=False
-    ):
-        self.layout = {
-            'keyboard': [],
-            'resize_keyboard': resize_keyboard,
-            'one_time_keyboard': one_time_keyboard,
-            'input_field_placeholder': input_field_placeholder,
-            'selective': selective
-        }
-
-    def add_buttons(self, *args):
-        buttons = []
-        for button in args:
-            buttons.append({'text': button})
-        self.layout['keyboard'].append(buttons)
+class Message:
+    def __init__(self, message):
+        self.message_id = message.get('message_id')
+        self.user = message.get('from')
+        self.text = message.get('text')
+        self.date = message.get('date')
+        self.voice = message.get('voice')
 
 
 class Core:
-    def __init__(
-        self,
-        text_handler,
-        callback_handler,
-        file_handler,
-        location_handler
-    ):
-        self.token = None
-        self.data = {'offset': 0, 'limit': 0, 'timeout': 0}
+    def __init__(self, text_handler, voice_handler):
         self.url = ''
 
-        self.event_handlers = {}
-        self.command_handlers = {}  # обработчики комманд
-        self.callback_button_handlers = {}  # обработчики нажатий callback кнопок
-        self.text_handler = text_handler  # управление событием 'message'
-        self.location_handler = location_handler
-        self.file_handler = file_handler
-        self.callback_handler = callback_handler  # управление событием 'callback'
+        self.text_callbacks = {}
+        self.users_table = {}
+        self.update_callbacks = {}
 
-        self.input_handlers = {}  # обработчики ввода пользователя
-        self.input_cancel_handler = None  # обработчик функции, которая вызывается после отмены ввода
-
-        self.unregistred_event_handler = None
-        self.unregistred_command_handler = None
-
-        self.event = {}
-        self.chat_id = ''
-        self.message_id = ''
-        self.text = ''
-        self.language_code = ''
-
-        self.location = {}
-
-        self.photo = []
-        self.document = {}
-        self.document_path = './documents/'
-        self.voice = {}
-        self.voices_path = './voices/'
-
-    def edit_message(self, text, keyboard={}, parse_mode='markdown'):
-        r'''Edit bot\'s last message, work only with callback buttons.
-
-        Parameters
-        ----------
-        text : |str|
-            New text of the message. 1-4096 characters.
-        keyboard : |dict|, optional
-            Dictionary with reply_keyboard or inline_keyboard layout.
-        parse_mode : |str|, optional
-            Mode for parsing entities in the message text.
-        '''
-        message_data = {
-            'chat_id': self.chat_id,
-            'text': text,
-            'message_id': self.message_id,
-            'parse_mode': parse_mode,
-            'reply_markup': json.dumps(keyboard)
+        self.handlers = {
+            'text': text_handler,
+            'voice': voice_handler
         }
 
-        response = requests.get(f'{self.url}/editMessageText', data=message_data)
-        if response.json()['ok'] is False:
-            logger.error(f'telegram response for edit_message: {response.json()}')
+        self.data = {'offset': 0, 'limit': 0, 'timeout': 0}
+        self.message = Message({})
+        self.user = User({})
 
-    def send_message(self, text, chat_id=None, keyboard={}, parse_mode='markdown'):
-        r'''Send message to user.
+    def on_text(self, text, func):
+        self.text_callbacks[text] = func
 
-        Parameters
-        ----------
-        text : |str|
-            New text of the message. 1-4096 characters.
-        chat_id : |str| or |int|, optional
-            Unique identifier for the target chat.
-        keyboard : |dict|, optional
-            Dictionary with reply_keyboard or inline_keyboard layout.
-        parse_mode : |str|, optional
-            Mode for parsing entities in the message text.
-        '''
+    def on_update(self, update_type, func):
+        self.update_callbacks[update_type] = func
+
+    def send_message(self, text, chat_id=None, parse_mode='markdown'):
         message_data = {
-            'chat_id': self.chat_id if chat_id is None else chat_id,
+            'chat_id': self.user.id if chat_id is None else chat_id,
             'text': text,
             'parse_mode': parse_mode,
-            'reply_markup': json.dumps(keyboard)
+            'reply_markup': {}
+        }
+        requests.get(f'{self.url}/sendMessage', data=message_data)
+
+    def bind_input(self, message_type, func, alt=None):
+        self.users_table[self.user.id]['input'] = {
+            'type': message_type, 'func': func, 'alt': alt
         }
 
-        response = requests.get(f'{self.url}/sendMessage', data=message_data)
-        if response.json()['ok'] is False:
-            logger.error(f'telegram response for send_message: {response.json()}')
+    def bind_next(self, func):
+        self.users_table[self.user.id]['next'] = func
 
-    def send_photo(self, photo, chat_id=None, caption='', keyboard={}, parse_mode='markdown'):
-        r'''Send photo to user.
+    def get_update_type(self):
+        if self.message.text is not None:
+            return 'text'
+        if self.message.voice is not None:
+            return 'voice'
 
-        Parameters
-        ----------
-        photo : |str|
-            Photo to send. Pass a file_id as String to send a photo that exists
-            on the Telegram servers (recommended), pass an HTTP URL as a String
-            for Telegram to get a photo from the Internet, or upload a new photo
-            using multipart/form-data. The photo must be at most 10 MB in size.
-            The photo's width and height must not exceed 10000 in total.
-            Width and height ratio must be at most 20.
-        chat_id : |str| or |int|, optional
-            Unique identifier for the target chat.
-        caption : |str|, optional
-            Photo caption, 0-1024 characters.
-        keyboard : |dict|, optional
-            Dictionary with reply_keyboard or inline_keyboard layout.
-        parse_mode : |str|, optional
-            Mode for parsing entities in the caption text.
-        '''
-        message_data = {
-            'chat_id': self.chat_id if chat_id is None else chat_id,
-            'photo': photo,
-            'caption': caption,
-            'parse_mode': parse_mode,
-            'reply_markup': json.dumps(keyboard)
-        }
+    def type_handler(self, type):
+        action = self.users_table[self.user.id]
 
-        response = requests.get(f'{self.url}/sendPhoto', data=message_data)
-        if response.json()['ok'] is False:
-            logger.error(f'telegram response for send_photo: {response.json()}')
-
-    def send_document(self, document, chat_id=None, caption='', keyboard={}, parse_mode='markdown'):
-        r'''Send document to user.
-
-        Parameters
-        ----------
-        document : |str|
-            File to send. Pass a file_id as String to send a file that exists on
-            the Telegram servers (recommended), pass an HTTP URL as a String for
-            Telegram to get a file from the Internet, or upload a new one using
-            multipart/form-data.
-        chat_id : |str| or |int|, optional
-            Unique identifier for the target chat.
-        caption : |str|, optional
-            Photo caption, 0-1024 characters.
-        keyboard : |dict|, optional
-            Dictionary with reply_keyboard or inline_keyboard layout.
-        parse_mode : |str|, optional
-            Mode for parsing entities in the caption text.
-        '''
-        message_data = {
-            'chat_id': self.chat_id if chat_id is None else chat_id,
-            'caption': caption,
-            'parse_mode': parse_mode,
-            'reply_markup': json.dumps(keyboard)
-        }
-
-        document_data = {'document': document}
-        response = requests.get(f'{self.url}/sendDocument', data=message_data, files=document_data)
-        if response.json()['ok'] is False:
-            logger.error(f'telegram response for send_document: {response.json()}')
-
-    def download_file(self, file_id, path=None):
-        r'''Download photo, voice message, document from telegram.
-
-        Parameters
-        ----------
-        file_id : |str|
-            File identifier of file to be downloaded.
-        path : |str|, optional
-            Custom file name. default paths:
-                for photos: ./photos/
-                for voice: ./voice/
-                for documents: ./documents/
-        '''
-        response = requests.get(f'{self.url}/getFile?file_id={file_id}')
-        if response.json()['ok'] is False:
-            logger.error(f'telegram response for download_file: {response.json()}')
+        next = action.get('next')
+        if next is not None:
+            next = action.pop('next')
+            next()
             return
 
-        telegram_file_path = response.json()['result']['file_path']
-        file = requests.get(f'https://api.telegram.org/file/bot{self.token}/{telegram_file_path}')
+        input = action.get('input')
+        if input is not None:
+            if action['input']['type'] != type:
+                if action['input']['alt'] is not None:
+                    action['input']['alt']()
+                return
 
-        if path is None:
-            path = telegram_file_path
+        handler = self.handlers.get(type)
+        if handler is not None:
+            handler(self, action)
 
-        with open(path, 'wb') as doc:
-            doc.write(file.content)
-
-        return path
-
-    def bind_command(self, command, handler, data=None):
-        r'''Bind command to the handler function.
-
-        Parameters
-        ----------
-        command : |str|
-            Command to bind. When bot get this command from user, handler
-            function will be invoked.
-        handler : |function|
-            Function that will be invoked when bot gets command from user.
-        data : |str|, optional
-            Data to be passed to the function.
-        '''
-        self.command_handlers[command] = {'handler': handler, 'data': data}
-
-    def bind_callback(self, callback_data, handler, data=None):
-        r'''Bind callback button to the handler function.
-
-        Parameters
-        ----------
-        callback_data : |str|
-            callback_data to bind. When bot get this callback data from user, handler
-            function will be invoked.
-        handler : |function|
-            Function that will be invoked when user pressed callback button.
-        data : |str|, optional
-            Data to be passed to the function.
-        '''
-        self.callback_button_handlers[callback_data] = {'handler': handler, 'data': data}
-
-    def bind_event(self, event, handler, data=None):
-        r'''Bind event to the handler function.
-
-        Parameters
-        ----------
-        event : |str|
-            Event to bind. When bot get this event from user, handler
-            function will be invoked.
-            Available events:
-                text,
-                callback,
-                location,
-                photo,
-                document,
-                voice
-        handler : |function|
-            Function that will be invoked when user arise event.
-        data : |str|, optional
-            Data to be passed to the function.
-        '''
-        events = ['text', 'callback', 'location', 'photo', 'document', 'voice']
-        if event in events:
-            self.event_handlers[event] = {'handler': handler, 'data': data}
-        else:
-            logger.error(f'no event "{event}" found')
-
-    def bind_input(self, event, handler, cancel_command=None, data=None):
-        r'''Get user input and bind it to the handler function. This method
-        can be used for create a dialog tree.
-
-        Parameters
-        ----------
-        event : |str|
-            Event to bind. When bot get this event from user, handler
-            function will be invoked.
-            Available events:
-                text,
-                callback,
-                location,
-                photo,
-                document,
-                voice
-        handler : |function|
-            Function that will be invoked when user arise event.
-        cancel_command : |str|
-            Command or callback_data whitch stop input - in development
-        data : |str|, optional
-            Data to be passed to the function.
-        '''
-        self.input_handlers.setdefault(self.chat_id, {})
-
-        match event:
-            case 'callback':
-                self.input_handlers[self.chat_id]['callback'] = {
-                    'handler': handler,
-                    'cancel_command': cancel_command,
-                    'data': data
-                }
-            case 'location':
-                self.input_handlers[self.chat_id]['location'] = {
-                    'handler': handler,
-                    'cancel_command': cancel_command,
-                    'data': data
-                }
-            case 'text':
-                self.input_handlers[self.chat_id]['text'] = {
-                    'handler': handler,
-                    'cancel_command': cancel_command,
-                    'data': data
-                }
-            case 'photo':
-                self.input_handlers[self.chat_id]['photo'] = {
-                    'handler': handler,
-                    'cancel_command': cancel_command,
-                    'data': data
-                }
-            case 'voice':
-                self.input_handlers[self.chat_id]['voice'] = {
-                    'handler': handler,
-                    'cancel_command': cancel_command,
-                    'data': data
-                }
-            case 'document':
-                self.input_handlers[self.chat_id]['document'] = {
-                    'handler': handler,
-                    'cancel_command': cancel_command,
-                    'data': data
-                }
-            case other:
-                logger.error(f'no event "{event}" found')
-
-    def unregistred_event(self, handler):
-        r'''Bind function for event, which has not been binded before.
-
-        Parameters
-        ----------
-        handler : |function|
-            Function that will be invoked when unregistred event arise.
-        '''
-        self.unregistred_event_handler = handler
-
-    def unregistred_command(self, handler):
-        r'''Bind function for command ot text, which has not been binded before.
-
-        Parameters
-        ----------
-        handler : |function|
-            Function that will be invoked when user send unregistred command or text.
-        '''
-        self.unregistred_command_handler = handler
-
-    def __get_events(self):
-        r'''Starts listening to event.'''
+    def get_update(self, show_update):
         updates = requests.get(f'{self.url}/getUpdates', data=self.data)
-        if updates.json().get('ok') is False:
-            logger.error(f'telegram response: {updates.json()}')
+        telegram_response = updates.json()['ok']
+        result = updates.json()['result']
+
+        if telegram_response is False:
+            print(f'telegram response: {updates.json()}')
             sys.exit(0)
-        return updates.json()['result']
 
-    def run(self, token='', show_event=False):
-        r'''handling events.
+        if len(result) == 1:
+            update = result[0]
+            self.data['offset'] = update['update_id'] + 1
+            if show_update:
+                print(update)
+            return update
+        return None
 
-        Parameters
-        ----------
-        token: |str|
-            Unique authentication token.
-            The token looks something like 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
-        show_event : |bool|
-            If true, prints event to console.
-        '''
+    def parse_message(self, update):
+        self.message = Message(update['message'])
+        self.user = User(self.message.user)
+
+        if self.users_table.get(self.user.id) is None:
+            self.users_table[self.user.id] = {}
+
+    def run(self, token='', show_update=False):
         self.token = token
         self.url = f'https://api.telegram.org/bot{token}'
 
-        logger.info('Bot running...')
-
         while True:
+            update = self.get_update(show_update)
+            if update is None:
+                continue
 
-            events = self.__get_events()
+            self.parse_message(update)
 
-            for event in events:
-
-                if (show_event):
-                    logger.info(event)
-
-                self.data['offset'] = event['update_id'] + 1
-                self.event = event
-
-                if 'message' in event.keys():
-                    message_event_keys = event['message'].keys()
-
-                    if 'location' in message_event_keys:
-                        self.location_handler.set_vars(event, self)
-                        self.location_handler.process(self)
-
-                    if 'photo' in message_event_keys:
-                        self.file_handler.set_vars(event, self)
-                        self.file_handler.process(self)
-
-                    if 'document' in message_event_keys:
-                        self.file_handler.set_vars(event, self)
-                        self.file_handler.process(self)
-
-                    if 'voice' in message_event_keys:
-                        self.file_handler.set_vars(event, self)
-                        self.file_handler.process(self)
-
-                    if 'text' in message_event_keys:
-                        self.text_handler.set_vars(event, self)
-                        self.text_handler.process(self)
-
-                elif 'callback_query' in event.keys():
-                    self.callback_handler.set_vars(event, self)
-                    self.callback_handler.process(self)
-
-                else:
-                    if self.unregistred_event_handler is not None:
-                        self.unregistred_event_handler()
+            type = self.get_update_type()
+            self.type_handler(type)
